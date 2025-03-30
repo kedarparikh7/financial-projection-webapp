@@ -95,5 +95,4 @@ if bs_file and pl_file:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df_result.to_excel(writer, sheet_name="Projections")
-        writer.close()
     st.download_button("Download Excel", data=buffer.getvalue(), file_name="Financial_Projection.xlsx")
