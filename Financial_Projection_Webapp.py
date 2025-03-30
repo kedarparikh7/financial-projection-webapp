@@ -1,98 +1,123 @@
-
-import streamlit as st
+# Import necessary libraries
 import pandas as pd
-import PyPDF2
-import re
-import io
+from fpdf import FPDF
 
-def extract_text_from_pdf(uploaded_file):
-    text = ""
-    reader = PyPDF2.PdfReader(uploaded_file)
-    for page in reader.pages:
-        text += page.extract_text()
-    return text
+# Placeholder data input structure for GUI (to be built using Streamlit, Tkinter, etc.)
+# Four upload buttons - 2 for Balance Sheet, 2 for P&L Statements
 
-def extract_financials(text):
-    lines = text.split('\n')
-    data = {}
-    for line in lines:
-        match = re.match(r"(.+?)\s+([-]?[\d,]+\.?\d*)$", line.strip())
-        if match:
-            key = match.group(1).strip()
-            value = float(match.group(2).replace(',', ''))
-            data[key] = value
-    return data
+# Sample input from balance sheet and P&L of last 2 years (to be replaced by uploaded files)
+data = {
+    'Particulars': [
+        'Paid up Capital', 'Reserves & Surplus', 'Intangible assets', 'Tangible Net Worth',
+        'Long Term Liabilities', 'Unsecured loans or Quasi Equity', 'Capital Employed',
+        'Net Block', 'Investments', 'Non Current Assets', 'Net Working Capital',
+        'Current Assets', 'Current Liabilities', 'Current Ratio', 'DER (TL/TNW)',
+        'TOL/TNW Ratio', 'Net Sales', 'Cost of Sales', 'Operating Profit/EBDITA',
+        'Other Income', 'Interest/Finance Charges', 'Depreciation', 'Tax',
+        'Net Profit after Tax', 'Cash Accruals'
+    ],
+    'FY2023': [
+        1000000, 300000, 50000, 1300000,
+        400000, 100000, 1800000,
+        800000, 200000, 1100000, 700000,
+        1200000, 500000, 2.4, 0.31,
+        0.42, 2000000, 1700000, 200000,
+        30000, 40000, 80000, 15000,
+        95000, 175000
+    ],
+    'FY2024': [
+        1000000, 500000, 50000, 1550000,
+        350000, 120000, 2020000,
+        880000, 220000, 1250000, 770000,
+        1300000, 530000, 2.45, 0.23,
+        0.39, 2400000, 2040000, 240000,
+        32000, 42000, 85000, 18000,
+        115000, 200000
+    ]
+}
 
-def project_values(base_value, growth_rate, years):
-    return [round(base_value * ((1 + growth_rate) ** i), 2) for i in range(1, years + 1)]
+# Convert to DataFrame
+df = pd.DataFrame(data)
 
-def generate_projection(bs_data, pl_data, assumptions, current_year):
-    years = [f"{current_year-1}-{str(current_year)[-2:]}", f"{current_year}-{str(current_year+1)[-2:]}"]
-    proj_years = [f"{current_year+i}-{str(current_year+i+1)[-2:]}" for i in range(1, 4)]
-    all_years = years + proj_years
+# Projections based on assumptions
+for year in ['FY2025', 'FY2026', 'FY2027']:
+    previous_year = df.columns[-1]
+    sales = df.loc[df['Particulars'] == 'Net Sales', previous_year].values[0] * 1.2
+    cost = 0.85 * sales
+    ebitda = 0.10 * sales
+    other_income = 30000
+    interest = 45000
+    dep = df.loc[df['Particulars'] == 'Depreciation', previous_year].values[0] * 1.10
+    tax = 0.25 * (ebitda + other_income - interest - dep)
+    net_profit = 0.06 * sales
+    cash_accruals = net_profit + dep
 
-    net_sales = pl_data.get("Sales Accounts", 1000000)
-    cost_of_sales = pl_data.get("Purchase Accounts", net_sales * 0.85)
+    new_col = [
+        df.loc[df['Particulars'] == 'Paid up Capital', previous_year].values[0] + 0.5 * df.loc[df['Particulars'] == 'Cash Accruals', previous_year].values[0],
+        df.loc[df['Particulars'] == 'Reserves & Surplus', previous_year].values[0] + net_profit,
+        df.loc[df['Particulars'] == 'Intangible assets', previous_year].values[0],
+        0,  # To be calculated
+        df.loc[df['Particulars'] == 'Long Term Liabilities', previous_year].values[0],
+        df.loc[df['Particulars'] == 'Unsecured loans or Quasi Equity', previous_year].values[0],
+        0,  # Capital Employed = TNW + Long Term Liab + Quasi Eq
+        df.loc[df['Particulars'] == 'Net Block', previous_year].values[0] + (30000 if year=='FY2025' else 50000) - dep,
+        df.loc[df['Particulars'] == 'Investments', previous_year].values[0] * 1.10,
+        0,  # Non Current Assets = Net Block + Investments
+        0,  # NWC
+        0,  # Current Assets
+        0,  # Current Liabilities
+        0,  # Current Ratio
+        0,  # DER
+        0,  # TOL/TNW
+        sales,
+        cost,
+        ebitda,
+        other_income,
+        interest,
+        dep,
+        tax,
+        net_profit,
+        cash_accruals
+    ]
 
-    index = ["Net Sales", "Cost of Sales", "Operating Profit/EBDITA", "Net Profit after Tax", "Cash Accruals"]
-    df = pd.DataFrame(index=index, columns=all_years)
+    # Derived calculations
+    tnw = new_col[0] + new_col[1] - new_col[2]
+    new_col[3] = tnw
+    cap_emp = tnw + new_col[4] + new_col[5]
+    new_col[6] = cap_emp
+    non_curr = new_col[7] + new_col[8]
+    new_col[9] = non_curr
 
-    df.loc["Net Sales", years[-1]] = net_sales
-    df.loc["Cost of Sales", years[-1]] = cost_of_sales
-    df.loc["Operating Profit/EBDITA", years[-1]] = net_sales * assumptions['ebitda_margin']
-    df.loc["Net Profit after Tax", years[-1]] = net_sales * assumptions['net_margin']
-    df.loc["Cash Accruals", years[-1]] = df.loc["Net Profit after Tax", years[-1]] + assumptions['depreciation_start']
+    debtors = (sales / 365) * 45
+    stock = (cost / 365) * 60
+    cash = 0.05 * sales
+    curr_assets = debtors + stock + cash
+    creditors = (cost / 365) * 30
+    nwc = curr_assets - creditors
+    new_col[10] = nwc
+    new_col[11] = curr_assets
+    new_col[12] = creditors
+    new_col[13] = round(curr_assets / creditors, 2)
+    new_col[14] = round(new_col[4] / tnw, 2)
+    new_col[15] = round((new_col[4] + new_col[12]) / tnw, 2)
 
-    for i, y in enumerate(proj_years):
-        ns = project_values(net_sales, assumptions['sales_growth'], 3)[i]
-        cs = ns * assumptions['cost_percent']
-        ebitda = ns * assumptions['ebitda_margin']
-        net_profit = ns * assumptions['net_margin']
-        dep = assumptions['depreciation_start'] if i == 0 else assumptions['depreciation_next']
+    # Append column
+    df[year] = new_col
 
-        df.loc["Net Sales", y] = ns
-        df.loc["Cost of Sales", y] = cs
-        df.loc["Operating Profit/EBDITA", y] = ebitda
-        df.loc["Net Profit after Tax", y] = net_profit
-        df.loc["Cash Accruals", y] = net_profit + dep
+# Export to TXT
+df.to_csv("financial_projection.txt", sep='\t', index=False)
 
-    return df
+# Export to PDF
+pdf = FPDF()
+pdf.add_page()
+pdf.set_font("Arial", size=10)
+pdf.cell(200, 10, txt="Financial Projections Report", ln=True, align='C')
 
-# Streamlit UI
-st.title("Financial Projection Generator")
+# Add table rows
+for i, row in df.iterrows():
+    pdf.cell(200, 10, txt=row['Particulars'], ln=True)
+    for col in df.columns[1:]:
+        pdf.cell(200, 10, txt=f"{col}: {row[col]}", ln=True)
+    pdf.cell(200, 5, txt="", ln=True)
 
-bs_file = st.file_uploader("Upload Balance Sheet PDF", type="pdf")
-pl_file = st.file_uploader("Upload Profit & Loss PDF", type="pdf")
-
-with st.sidebar:
-    st.header("Projection Assumptions")
-    sales_growth = st.number_input("Net Sales Growth (%)", value=20) / 100
-    cost_percent = st.number_input("Cost of Sales (% of Sales)", value=85) / 100
-    ebitda_margin = st.number_input("EBITDA Margin (%)", value=10) / 100
-    net_margin = st.number_input("Net Profit Margin (%)", value=6) / 100
-    depreciation_start = st.number_input("Depreciation FY1", value=5000)
-    depreciation_next = st.number_input("Depreciation FY2/FY3", value=10000)
-
-if bs_file and pl_file:
-    bs_text = extract_text_from_pdf(bs_file)
-    pl_text = extract_text_from_pdf(pl_file)
-    bs_data = extract_financials(bs_text)
-    pl_data = extract_financials(pl_text)
-
-    assumptions = {
-        'sales_growth': sales_growth,
-        'cost_percent': cost_percent,
-        'ebitda_margin': ebitda_margin,
-        'net_margin': net_margin,
-        'depreciation_start': depreciation_start,
-        'depreciation_next': depreciation_next
-    }
-
-    df_result = generate_projection(bs_data, pl_data, assumptions, current_year=2024)
-    st.success("Projection generated successfully!")
-    st.dataframe(df_result)
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df_result.to_excel(writer, sheet_name="Projections")
-    st.download_button("Download Excel", data=buffer.getvalue(), file_name="Financial_Projection.xlsx")
+pdf.output("financial_projection.pdf")
